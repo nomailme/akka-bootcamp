@@ -1,15 +1,18 @@
 ﻿using System;
+using System.IO;
 using Akka.Actor;
 
 namespace WinTail
 {
-    public class ValidationActor : UntypedActor
+    public class FileValidationActor : UntypedActor
     {
         private readonly IActorRef consoleWriterActor;
+        private readonly IActorRef tailCoordinatorActor;
 
-        public ValidationActor(IActorRef consoleWriterActor)
+        public FileValidationActor(IActorRef consoleWriterActor, IActorRef tailCoordinatorActor)
         {
             this.consoleWriterActor = consoleWriterActor;
+            this.tailCoordinatorActor = tailCoordinatorActor;
         }
 
         /// <summary>
@@ -24,26 +27,31 @@ namespace WinTail
             if (string.IsNullOrEmpty(message))
             {
                 consoleWriterActor.Tell(new Messages.NullInputError("No input"));
+                Sender.Tell(new Messages.ContinueProcessing());
             }
             else
             {
-                bool valid = IsValid(message);
+                bool valid = IsFileExists(message);
                 if (valid)
                 {
                     consoleWriterActor.Tell(new Messages.InputSuccess("Valid message"));
+
+                    tailCoordinatorActor.Tell(new TailCoordinatorActor.StartTail(message, consoleWriterActor));
                 }
                 else
                 {
                     consoleWriterActor.Tell(new Messages.ValidationError("Odd number of characters"));
+
+                    Sender.Tell(new Messages.ContinueProcessing());
                 }
             }
 
             Sender.Tell(new Messages.ContinueProcessing());
         }
 
-        private bool IsValid(string message)
+        private bool IsFileExists(string message)
         {
-            return message.Length % 2 == 0;
+            return File.Exists(message);
         }
     }
 }
