@@ -7,9 +7,9 @@ namespace WinTail
 {
     public class TailActor : UntypedActor
     {
-        private string filepath;
+        private readonly string filepath;
         private FileObserver observer;
-        private IActorRef reporterActor;
+        private readonly IActorRef reporterActor;
         private FileStream fileStream;
         private StreamReader fileStreamReader;
 
@@ -17,7 +17,26 @@ namespace WinTail
         {
             this.reporterActor = reporterActor;
             this.filepath = filepath;
+        }
 
+        /// <summary>
+        /// User overridable callback.
+        ///                 <p/>
+        ///                 Is called asynchronously after 'actor.stop()' is invoked.
+        ///                 Empty default implementation.
+        /// </summary>
+        protected override void PostStop()
+        {
+            observer.Dispose();
+            observer = null;
+
+            fileStreamReader.Close();
+            fileStreamReader.Dispose();
+            base.PostStop();
+        }
+
+        protected override void PreStart()
+        {
             observer = new FileObserver(Self, Path.GetFullPath(filepath));
             observer.Start();
 
@@ -28,6 +47,7 @@ namespace WinTail
             string text = fileStreamReader.ReadToEnd();
 
             Self.Tell(new InitialRead(filepath, text));
+            base.PreStart();
         }
 
         /// <summary>
@@ -48,7 +68,7 @@ namespace WinTail
             else if (message is FileError)
             {
                 var fileError = message as FileError;
-                reporterActor.Tell(string.Format("Error: {0}",fileError.Message));
+                reporterActor.Tell($"Error: {fileError.Message}");
             }
             else if (message is InitialRead)
             {
