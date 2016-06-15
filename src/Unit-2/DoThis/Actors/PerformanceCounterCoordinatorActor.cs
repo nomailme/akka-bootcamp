@@ -7,7 +7,7 @@ using Akka.Actor;
 
 namespace ChartApp.Actors
 {
-    public class PerformanceCounterCoordinatorActor:ReceiveActor
+    public class PerformanceCounterCoordinatorActor: ReceiveActor
     {
         public class Watch
         {
