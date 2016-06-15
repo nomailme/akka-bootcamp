@@ -51,5 +51,9 @@ namespace ChartApp.Actors
                 Subscriber = subscriber;
             }
         }
+
+        public class TogglePaused
+        {
+        }
     }
 }

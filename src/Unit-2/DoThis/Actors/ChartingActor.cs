@@ -1,45 +1,66 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 using Akka.Actor;
 
 namespace ChartApp.Actors
 {
-    public class ChartingActor : ReceiveActor
+    public class ChartingActor : ReceiveActor, IWithUnboundedStash
     {
         public const int MaxPoints = 250;
 
         private readonly Chart _chart;
+        private readonly Button pauseButton;
         private Dictionary<string, Series> _seriesIndex;
 
         private int xPosCounter = 0;
 
-        public ChartingActor(Chart chart) : this(chart, new Dictionary<string, Series>())
+        public ChartingActor(Chart chart, Button pauseButton) : this(chart, new Dictionary<string, Series>(), pauseButton)
         {
         }
 
-        public ChartingActor(Chart chart, Dictionary<string, Series> seriesIndex)
+        private ChartingActor(Chart chart, Dictionary<string, Series> seriesIndex, Button pauseButton)
         {
             _chart = chart;
             _seriesIndex = seriesIndex;
+            this.pauseButton = pauseButton;
 
             Receive<AddSeries>(addSeries => HandleAddSeries(addSeries));
             Receive<InitializeChart>(x => HandleInitialize(x));
             Receive<RemoveSeries>(x => HandleRemoveSeries(x));
             Receive<ChartingMessages.Metric>(x => HandleMetrics(x));
+
+            Receive<ChartingMessages.TogglePaused>(x =>
+            {
+                SetPausedButtonText(true);
+                BecomeStacked(Paused);
+            });
         }
 
-        private void HandleRemoveSeries(RemoveSeries series)
+        /// <summary>
+        /// Gets or sets the stash. This will be automatically populated by the framework AFTER the constructor has been run.
+        ///             Implement this as an auto property.
+        /// </summary>
+        /// <value>
+        /// The stash.
+        /// </value>
+        public IStash Stash { get; set; }
+
+        private void HandleMetricPaused(ChartingMessages.Metric metric)
         {
-            if (!string.IsNullOrEmpty(series.Series) &&
-            _seriesIndex.ContainsKey(series.Series))
+            if (string.IsNullOrEmpty(metric.Series) || _seriesIndex.ContainsKey(metric.Series) == false)
             {
-                var seriesToRemove = _seriesIndex[series.Series];
-                _seriesIndex.Remove(series.Series);
-                _chart.Series.Remove(seriesToRemove);
-                SetChartBoundaries();
+                return;
             }
+            Series series = _seriesIndex[metric.Series];
+            series.Points.AddXY(xPosCounter++, 0.0d);
+            while (series.Points.Count > MaxPoints)
+            {
+                series.Points.RemoveAt(0);
+            }
+            SetChartBoundaries();
         }
 
         private void HandleMetrics(ChartingMessages.Metric metric)
@@ -47,11 +68,39 @@ namespace ChartApp.Actors
             if (!string.IsNullOrEmpty(metric.Series) &&
                 _seriesIndex.ContainsKey(metric.Series))
             {
-                var series = _seriesIndex[metric.Series];
+                Series series = _seriesIndex[metric.Series];
                 series.Points.AddXY(xPosCounter++, metric.CounterValue);
-                while (series.Points.Count > MaxPoints) series.Points.RemoveAt(0);
+                while (series.Points.Count > MaxPoints)
+                {
+                    series.Points.RemoveAt(0);
+                }
                 SetChartBoundaries();
             }
+        }
+
+        private void HandleRemoveSeries(RemoveSeries series)
+        {
+            if (!string.IsNullOrEmpty(series.Series) &&
+                _seriesIndex.ContainsKey(series.Series))
+            {
+                Series seriesToRemove = _seriesIndex[series.Series];
+                _seriesIndex.Remove(series.Series);
+                _chart.Series.Remove(seriesToRemove);
+                SetChartBoundaries();
+            }
+        }
+
+        private void Paused()
+        {
+            Receive<AddSeries>(x => Stash.Stash());
+            Receive<RemoveSeries>(x => Stash.Stash());
+            Receive<ChartingMessages.Metric>(x => HandleMetricPaused(x));
+            Receive<ChartingMessages.TogglePaused>(x =>
+            {
+                SetPausedButtonText(false);
+                UnbecomeStacked();
+                Stash.UnstashAll();
+            });
         }
 
         private void SetChartBoundaries()
@@ -71,6 +120,12 @@ namespace ChartApp.Actors
                 area.AxisY.Minimum = minAxisY;
                 area.AxisY.Maximum = maxAxisY;
             }
+        }
+
+        private void SetPausedButtonText(bool paused)
+        {
+            pauseButton.Text = !paused ? "PAUSED ||" : "RESUME > ";
+            ;
         }
 
         #region Messages
@@ -121,7 +176,7 @@ namespace ChartApp.Actors
         private void HandleAddSeries(AddSeries series)
         {
             if (!string.IsNullOrEmpty(series.Series.Name) &&
-         !_seriesIndex.ContainsKey(series.Series.Name))
+                !_seriesIndex.ContainsKey(series.Series.Name))
             {
                 _seriesIndex.Add(series.Series.Name, series.Series);
                 _chart.Series.Add(series.Series);
@@ -141,7 +196,7 @@ namespace ChartApp.Actors
             _chart.Series.Clear();
 
             // set the axes up
-            var area = _chart.ChartAreas[0];
+            ChartArea area = _chart.ChartAreas[0];
             area.AxisX.IntervalType = DateTimeIntervalType.Number;
             area.AxisY.IntervalType = DateTimeIntervalType.Number;
 
@@ -150,7 +205,7 @@ namespace ChartApp.Actors
             // attempt to render the initial chart
             if (_seriesIndex.Any())
             {
-                foreach (var series in _seriesIndex)
+                foreach (KeyValuePair<string, Series> series in _seriesIndex)
                 {
                     // force both the chart and the internal index to use the same names
                     series.Value.Name = series.Key;
