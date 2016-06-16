@@ -17,6 +17,8 @@ namespace GithubActors.Actors
         private IActorRef _coordinator;
         private int pendingJobReplies;
 
+        private RepoKey repoJob;
+
         /// <summary>
         /// Gets or sets the stash. This will be automatically populated by the framework AFTER the constructor has been run.
         ///             Implement this as an auto property.
@@ -40,7 +42,7 @@ namespace GithubActors.Actors
             // create a broadcast router who will ask all of them 
             // if they're available for work
             _coordinator =
-                Context.ActorOf(Props.Create<GithubCoordinatorActor>().WithRouter(FromConfig.Instance), ActorPaths.GithubCommanderActor.Name);
+                Context.ActorOf(Props.Create<GithubCoordinatorActor>().WithRouter(FromConfig.Instance), ActorPaths.GithubCoordinatorActor.Name);
             base.PreStart();
         }
 
@@ -58,7 +60,7 @@ namespace GithubActors.Actors
             Receive<CanAcceptJob>(job =>
             {
                 _coordinator.Tell(job);
-
+                repoJob = job.Repo;
                 BecomeAsking();
             });
         }
@@ -68,10 +70,18 @@ namespace GithubActors.Actors
             _canAcceptJobSender = Sender;
             pendingJobReplies = _coordinator.Ask<Routees>(new GetRoutees()).Result.Members.Count();
             Become(Asking);
+
+            Context.SetReceiveTimeout(TimeSpan.FromSeconds(3));
         }
 
         private void Asking()
         {
+            Receive<ReceiveTimeout>(x =>
+            {
+                _canAcceptJobSender.Tell(new UnableToAcceptJob(repoJob));
+                BecomeReady();
+            });
+
             // stash any subsequent requests
             Receive<CanAcceptJob>(job => Stash.Stash());
 
@@ -104,6 +114,8 @@ namespace GithubActors.Actors
         {
             Become(Ready);
             Stash.UnstashAll();
+
+            Context.SetReceiveTimeout(null);
         }
 
         #region Message classes

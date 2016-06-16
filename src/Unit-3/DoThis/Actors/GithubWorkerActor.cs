@@ -74,12 +74,16 @@ namespace GithubActors.Actors
                 var starrer = (query.Query as QueryStarrer).Login;
                 try
                 {
-                    var getStarrer = _gitHubClient.Activity.Starring.GetAllForUser(starrer);
-
-                    //ewww
-                    getStarrer.Wait();
-                    var starredRepos = getStarrer.Result;
-                    Sender.Tell(new StarredReposForUser(starrer, starredRepos));
+                    var sender = Sender;
+                    var getStarrer = _gitHubClient.Activity.Starring.GetAllForUser(starrer)
+                        .ContinueWith<object>(x =>
+                        {
+                            if (x.IsCanceled || x.IsFaulted)
+                            {
+                                return query.NextTry();
+                            }
+                            return new StarredReposForUser(starrer, x.Result);
+                        }).PipeTo(sender);
                 }
                 catch (Exception ex)
                 {
@@ -95,12 +99,16 @@ namespace GithubActors.Actors
                 var starrers = (query.Query as QueryStarrers).Key;
                 try
                 {
-                    var getStars = _gitHubClient.Activity.Starring.GetAllStargazers(starrers.Owner, starrers.Repo);
-
-                    //ewww
-                    getStars.Wait();
-                    var stars = getStars.Result;
-                    Sender.Tell(stars.ToArray());
+                    var sender = Sender;
+                    _gitHubClient.Activity.Starring.GetAllStargazers(starrers.Owner, starrers.Repo)
+                        .ContinueWith<object>(x =>
+                        {
+                            if (x.IsCanceled || x.IsFaulted)
+                            {
+                                return query.NextTry();
+                            }
+                            return x.Result.ToArray();
+                        }).PipeTo(sender);
                 }
                 catch (Exception ex)
                 {
